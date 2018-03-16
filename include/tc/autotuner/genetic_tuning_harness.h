@@ -41,7 +41,8 @@ class GeneticTunerHarness {
       size_t n,
       uint8_t crossoverRate,
       uint8_t mutationRate,
-      size_t numberElites,
+      size_t matingPoolSize,
+      size_t selectionPoolSize,
       lang::TreeRef tc,
       std::string kernelName,
       const std::unordered_map<size_t, std::vector<const DLTensor*>>& inputs,
@@ -68,12 +69,16 @@ class GeneticTunerHarness {
       size_t bestTimeSoFar);
 
   /// Helper function to delegate compiling on the cpu to different threads
-  template <typename ExecutorType>
-  void doCompile(ExecutorType& engine);
+  template <typename ExecutorType, typename Population>
+  void doCompile(ExecutorType& engine, Population& population);
 
   /// Helper function to delegate running on the gpu to different threads
-  template <typename ExecutorType>
-  void doGpuWork(size_t gpu, ExecutorType& engine, Printer& printer);
+  template <typename ExecutorType, typename Population>
+  void doGpuWork(
+      size_t gpu,
+      ExecutorType& engine,
+      Population& population,
+      Printer& printer);
 
   /// Make options from conf
   tc::MappingOptions makeOptions(const CandidateConfiguration& conf);
@@ -91,7 +96,8 @@ class GeneticTunerHarness {
   const size_t kMaxPopulationSize;
   const uint8_t kCrossOverRate;
   const uint8_t kMutationRate;
-  const size_t kNumberElites;
+  const size_t kMatingPoolSize;
+  const size_t kSelectionPoolSize;
 
   TuningConfiguration configuration;
 

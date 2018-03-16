@@ -59,6 +59,17 @@ DEFINE_uint32(
     tuner_gen_pop_size,
     100,
     "Population size for genetic autotuning");
+
+DEFINE_uint32(
+    tuner_gen_mating_pool_size,
+    300,
+    "Mating pool size for genetic autotuning");
+
+DEFINE_uint32(
+    tuner_gen_selection_pool_size,
+    300,
+    "Selection pool size for genetic autotuning");
+
 DEFINE_uint32(
     tuner_gen_crossover_rate,
     80,
