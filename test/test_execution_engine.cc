@@ -230,7 +230,7 @@ TEST_F(ATenCompilationUnitTest, Convolution2d) {
       inputs,
       outputs);
 
-  at::Tensor expected = at::conv2d(I, W1, at::IntList({KH, KW}), B);
+  at::Tensor expected = at::conv2d(I, W1, B);
   at::Tensor diff = outputs[1].sub(expected);
   checkRtol(diff, inputs, C * KW * KH, 5e-7);
 }
@@ -262,7 +262,7 @@ TEST_F(ATenCompilationUnitTest, Convolution2dStrided) {
       inputs,
       outputs);
 
-  at::Tensor expected = at::conv2d(I, W1, at::IntList({KH, KW}), B);
+  at::Tensor expected = at::conv2d(I, W1, B);
   at::Tensor diff = outputs[0].sub(expected);
   // Approximate striding effect below, relax precision by factor 2
   checkRtol(diff, inputs, 2 * (C * KW * KH) / (SW * SH), 5e-7);
@@ -270,7 +270,7 @@ TEST_F(ATenCompilationUnitTest, Convolution2dStrided) {
 
 TEST_F(ATenCompilationUnitTest, Casts) {
   at::Tensor a = at::CUDA(at::kFloat).ones({2, 4});
-  at::Tensor b = at::CUDA(at::kInt).tensor({}).assign_(4);
+  at::Tensor b = at::CUDA(at::kInt).ones({}) * 4;
   a = a / 2.0 + 1;
   at::Tensor c = at::CUDA(at::kFloat).rand({3, 5});
 
@@ -286,7 +286,7 @@ TEST_F(ATenCompilationUnitTest, Casts) {
       tc::MappingOptions::makeNaiveMappingOptions(),
       {a, b},
       outputs);
-  auto r = outputs[0].sub(at::CUDA(at::kInt).ones({2, 4}) + 4).max().toLong();
+  auto r = outputs[0].sub(at::CUDA(at::kInt).ones({2, 4}) + 4).max().toCLong();
   CHECK_EQ(r, 0);
 }
 

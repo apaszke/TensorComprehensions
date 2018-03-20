@@ -552,11 +552,10 @@ TEST_F(TcMapperTest, DISABLED_SpatialBatchNormalization) {
     double prec = 3e-7;
     std::cout << "Checking expected output relative precision @" << prec;
     bool training = true;
+    bool cudnn_enabled = false;
     at::Tensor weight = at::CUDA(at::kFloat).ones({C1});
     at::Tensor bias = at::CUDA(at::kFloat).zeros({C1});
-    auto save_mean = outputs[1].clone().zero_();
-    auto save_std = outputs[2].clone().zero_();
-    auto O = at::batch_norm_forward(
+    auto O = at::batch_norm(
         I,
         weight,
         bias,
@@ -565,9 +564,8 @@ TEST_F(TcMapperTest, DISABLED_SpatialBatchNormalization) {
         training,
         at::Scalar(momentum).toFloat(),
         at::Scalar(eps).toFloat(),
-        save_mean,
-        save_std);
-    auto diff = O.sub(outputs[0]);
+        cudnn_enabled);
+    auto diff = O - outputs[0];
     checkRtol(diff, inputs, N * H * W, prec);
   };
 

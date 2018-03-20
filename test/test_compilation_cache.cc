@@ -1049,7 +1049,7 @@ class ConvolutionTester {
     atCompl.run("convolution", inputs_, outputs_, handle, true);
 
     at::Tensor expected =
-        at::conv2d(inputs_[0], inputs_[1], at::IntList({KH, KW}), inputs_[2]);
+        at::conv2d(inputs_[0], inputs_[1], inputs_[2]);
     at::Tensor diff = outputs_[1].sub(expected);
     checkRtol(diff, inputs_, C * KW * KH, 1e-6);
   }
