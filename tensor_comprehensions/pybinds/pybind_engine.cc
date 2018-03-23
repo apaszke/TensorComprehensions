@@ -16,6 +16,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <sstream>
 
 #include <Python.h>
 #include <pybind11/pybind11.h>
@@ -30,6 +31,8 @@
 #include "tc/core/flags.h"
 #include "tc/core/mapping_options.h"
 #include "tc/core/scope_guard.h"
+#include "tc/lang/sema.h"
+#include "tc/lang/tc_format.h"
 
 namespace tc {
 namespace python {
@@ -38,7 +41,131 @@ namespace py = pybind11;
 
 using ATenCudaCompilationUnit = tc::ATenCompilationUnit<tc::CudaTcExecutor>;
 
+static const lang::SourceRange dummyRange {std::make_shared<std::string>(""), 0, 0};
+
+using namespace lang;
+
+struct GradInfo {
+  void addGradComprehension(Ident lhs_name,
+                            ListView<lang::TreeRef> lhs_indices,
+                            TreeRef rhs_expr) {
+    int assignKind = has_grad_defined_.count(lhs_name.name()) > 0 ? TK_PLUS_EQ : TK_PLUS_EQ_B;
+    grad_comps_.push_back(
+      Comprehension::create(dummyRange,
+                            lhs_name,
+                            lhs_indices,
+                            Compound::create(assignKind, dummyRange, {}),
+                            rhs_expr,
+                            ListView<TreeRef>::create(dummyRange, TreeList{}),
+                            Compound::create(TK_OPTION, dummyRange, {}),
+                            ListView<TreeRef>::create(dummyRange, TreeList{})));
+    has_grad_defined_.insert(lhs_name.name());
+  }
+  bool has_zero_grad(const std::string& name) {
+    return has_zero_grad_.count(name) > 0;
+  }
+  void mark_zero_grad(const std::string& name) {
+    has_zero_grad_.count(name);
+  }
+  void mark_has_grad(const std::string& name) {
+    has_grad_defined_.insert(name);
+  }
+  std::vector<lang::TreeRef>&& getGradComps() {
+    return std::move(grad_comps_);
+  }
+private:
+  std::vector<lang::TreeRef> grad_comps_;
+  std::unordered_set<std::string> has_grad_defined_;
+  std::unordered_set<std::string> has_zero_grad_;
+};
+
+void differentiateExpr(GradInfo& grad_info,
+                       lang::TreeRef expr,
+                       lang::TreeRef grad_output_expr) {
+  using namespace lang;
+  switch (expr->kind()) {
+    case TK_ACCESS: {
+      Access acc {expr};
+      grad_info.addGradComprehension(acc.name(), acc.arguments(), grad_output_expr);
+      break;
+    } case '+': {
+      differentiateExpr(grad_info, expr->tree(0), grad_output_expr);
+      differentiateExpr(grad_info, expr->tree(1), grad_output_expr);
+      break;
+    } case '*': {
+      differentiateExpr(grad_info, expr->tree(0),
+                        Compound::create('*', expr->range(), {grad_output_expr, expr->tree(1)}));
+      differentiateExpr(grad_info, expr->tree(1),
+                        Compound::create('*', expr->range(), {grad_output_expr, expr->tree(0)}));
+      break;
+    } default:
+      throw std::runtime_error("unsupported expr kind in AD: " + kindToString(expr->kind()));
+  }
+}
+
+TreeRef gradNameOf(const Ident& name) {
+  return Ident::create(dummyRange, std::string("d_") + name.name());
+}
+
+// TODO: check that there is no write after read
+std::string differentiate(const std::string& source) {
+  using namespace lang;
+  auto def = Def(Sema().checkFunction(Parser(source).parseFunction()));
+
+  GradInfo grad_info;
+  // We will take grads w.r.t. returns as inputs, so mark them as present
+  for (Param r : def.returns()) {
+    grad_info.mark_has_grad(r.ident().name());
+  }
+  auto body = def.statements();
+  auto it = body.end();
+  if (it == body.begin())
+    throw std::runtime_error("empty body");
+  do {
+    Comprehension comp = *(--it);
+    // TODO: check assignment
+    auto primal_output = comp.ident();
+    if (grad_info.has_zero_grad(primal_output.name()))
+      continue;
+    auto grad_output_expr = Access::create(dummyRange,
+                                           gradNameOf(primal_output),
+                                           comp.indices());
+    differentiateExpr(grad_info, comp.rhs(), grad_output_expr);
+    if (comp.assignment()->kind() == TK_PLUS_EQ_B) {
+      grad_info.mark_zero_grad(primal_output.name());
+    }
+  } while (it != body.begin());
+
+  auto inferredType = Compound::create(TK_INFERRED, dummyRange, {});
+
+  std::vector<TreeRef> reverseInputs;
+  for (Param input : def.params()) {
+    reverseInputs.push_back(input);
+  }
+  for (Param output : def.returns()) {
+    reverseInputs.push_back(output);
+  }
+  for (Param output : def.returns()) {
+    reverseInputs.push_back(Param::create(dummyRange, gradNameOf(output.ident()), inferredType));
+  }
+
+  std::vector<TreeRef> reverseOutputs;
+  for (Param input : def.params()) {
+    reverseOutputs.push_back(Param::create(dummyRange, gradNameOf(input.ident()), inferredType));
+  }
+
+  auto reverseDef = Def::create(dummyRange,
+                                Ident::create(dummyRange, "grad_" + def.name().name()),
+                                ListView<Param>::create(dummyRange, std::move(reverseInputs)),
+                                ListView<Param>::create(dummyRange, std::move(reverseOutputs)),
+                                ListView<Comprehension>::create(dummyRange, grad_info.getGradComps()));
+  std::ostringstream s;
+  tcFormat(s, reverseDef);
+  return s.str();
+}
+
 PYBIND11_MODULE(tc, m) {
+  m.def("_differentiate", differentiate);
   m.def("set_logtostderr", [](bool logtostderr) {
     FLAGS_logtostderr = logtostderr;
   });
