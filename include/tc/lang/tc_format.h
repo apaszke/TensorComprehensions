@@ -17,12 +17,14 @@
 
 #include "tc/lang/tree.h"
 
+#include <ostream>
+
 namespace lang {
 
 /// \file tc_format.h
 /// A pretty printer that turns a Def (TC AST) into a valid TC string that
 /// could be e.g. re-parsed.
 
-std::string tcFormat(TreeRef def);
+void tcFormat(std::ostream& s, TreeRef def);
 
 } // namespace lang

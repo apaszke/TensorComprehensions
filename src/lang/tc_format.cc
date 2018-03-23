@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "tc/lang/tc_format.h"
+#include "tc/lang/tree_views.h"
 
 namespace lang {
 
@@ -21,49 +22,163 @@ namespace {
 
 void showExpr(std::ostream& s, const TreeRef& expr);
 
+template <typename T>
+void show(std::ostream& s, T x) {
+  s << x;
+}
+
+template <typename T, typename F>
+void showList(std::ostream& s, const ListView<T>& list, F elem_cb) {
+  bool first = true;
+  for (const auto& elem : list) {
+    if (!first) {
+      s << ", ";
+    }
+    elem_cb(s, elem);
+    first = false;
+  }
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& s, const ListView<T>& list) {
+  showList(s, list, show<T>);
+  return s;
+}
+
 std::ostream& operator<<(std::ostream& s, const Ident& id) {
-  s << id.name();
+  return s << id.name();
 }
 
 std::ostream& operator<<(std::ostream& s, const Param& p) {
   if (!p.typeIsInferred()) {
-    TensorType type {p.type()};
+    TensorType type{p.type()};
     s << kindToString(type.scalarType()) << "(";
-    for (const TreeRef & dim_expr : p.dims())
-      showExpr(s, dim_expr);
+    showList(s, type.dims(), showExpr);
     s << ") ";
   }
   return s << p.ident();
 }
 
-template<typename T>
-std::ostream& operator<<(std::ostream& s, const ListView<T>& list) {
-  bool first = true;
-  for (auto & elem : list) {
-    if (!first)
-      s << ", ";
-    s << elem;
-    first = false;
-  }
+std::ostream& operator<<(std::ostream& s, const Comprehension& comp) {
+  s << comp.ident() << "(" << comp.indices() << ") "
+    << kindToToken(comp.assignment()->kind()) << " ";
+  showExpr(s, comp.rhs());
+  if (!comp.whereClauses().empty())
+    throw std::runtime_error("Printing of where clauses is not supported yet");
+  if (comp.equivalent().present())
+    throw std::runtime_error(
+        "Printing of equivalent comprehensions is not supported yet");
   return s;
 }
 
 void showExpr(std::ostream& s, const TreeRef& expr) {
   switch (expr->kind()) {
-    case TK_IDENT:
+    case TK_IDENT: {
       s << Ident(expr);
-    default:
-      throw std::runtime_error("Unexpected kind in showExpr: " + kindToString(expr->kind()));
+      break;
+    }
+    case TK_AND:
+    case TK_OR:
+    case '<':
+    case '>':
+    case TK_EQ:
+    case TK_LE:
+    case TK_GE:
+    case TK_NE:
+    case '+':
+    case '*':
+    case '/': {
+      s << "(";
+      showExpr(s, expr->tree(0));
+      s << " " << kindToToken(expr->kind()) << " ";
+      showExpr(s, expr->tree(1));
+      s << ")";
+      break;
+      // '-' is annoying because it can be both unary and binary
+    }
+    case '-': {
+      if (expr->trees().size() == 1) {
+        s << "-";
+        showExpr(s, expr->tree(0));
+      } else {
+        s << "(";
+        showExpr(s, expr->tree(0));
+        s << " - ";
+        showExpr(s, expr->tree(1));
+        s << ")";
+      }
+      break;
+    }
+    case '!': {
+      s << "!";
+      showExpr(s, expr->tree(0));
+      break;
+    }
+    case TK_CONST: {
+      Const con{expr};
+      int scalarType = con.type()->kind();
+      switch (con.type()->kind()) {
+        case TK_FLOAT:
+        case TK_DOUBLE:
+          s << con.value();
+          break;
+        case TK_UINT8:
+        case TK_UINT16:
+        case TK_UINT32:
+        case TK_UINT64:
+          s << static_cast<uint64_t>(con.value());
+          break;
+        case TK_INT8:
+        case TK_INT16:
+        case TK_INT32:
+        case TK_INT64:
+          s << static_cast<int64_t>(con.value());
+          break;
+        default:
+          throw std::runtime_error(
+              "Unknown scalar type in const: " +
+              kindToString(con.type()->kind()));
+      }
+      break;
+    }
+    case TK_CAST: {
+      Cast cast{expr};
+      s << kindToToken(cast.type()->kind()) << "(";
+      showExpr(s, cast.value());
+      s << ")";
+      break;
+    }
+    case '.': {
+      Select sel{expr};
+      s << sel.name() << "." << sel.index();
+      break;
+    }
+    case TK_APPLY:
+    case TK_ACCESS:
+    case TK_BUILT_IN: {
+      Apply app{expr};
+      s << app.name() << "(";
+      showList(s, app.arguments(), showExpr);
+      s << ")";
+      break;
+    }
+    default: {
+      throw std::runtime_error(
+          "Unexpected kind in showExpr: " + kindToString(expr->kind()));
+    }
   }
 }
 
 } // anonymous namespace
 
-std::string tcFormat(TreeRef def) {
-  std::ostringstream ss;
-  ss << "def " << def.name() << "(" << def.params() << ")" <<
-     << " -> (" << def.returns() << ") {\n";
+void tcFormat(std::ostream& s, TreeRef _def) {
+  Def def{_def};
+  s << "def " << def.name() << "(" << def.params() << ")"
+    << " -> (" << def.returns() << ") {\n";
+  for (const Comprehension& c : def.statements()) {
+    s << "  " << c << "\n";
+  }
+  s << "}";
 }
 
 } // namespace lang
-
